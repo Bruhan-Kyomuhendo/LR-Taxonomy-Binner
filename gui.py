@@ -483,4 +483,201 @@ class MainWinInterface(GUI):
         self.subfolder_mode.pack(side=tkinter.LEFT)
         btn_open = tkinter.Button(self.frame_buttons, image=self.img_open, command=self.open_onclick)
         btn_open.pack(side=tkinter.LEFT)
-##methods
+
+# Methods
+
+def process(self, filelist):
+    # Set pattern options
+    settings = self.choosePatternType()
+    if not settings:
+        return
+    self.setPatternType(settings)
+    elements = []
+    seqnames = []
+    for fname in filelist:
+        elements.extend(filelist[fname])
+        seqnames.append(fname)
+    start = 0
+    TOTAL = len(filelist)
+    oTree = None
+    # Create new workspace
+    workspace_id = tools.randomizer("nnn_#nnnnn", self.workspaces.keys())
+    self.workspaces[workspace_id] = WorkSpace(self.do, workspace_id, self.root, settings['name'])
+    self.workspaces[workspace_id].setPatternType(self.pattern_type + str(self.normalization) +
+                                                 "_" + str(self.word_length) + "mer")
+    counter = 0
+    while start < TOTAL:
+        stop = start + 500
+        if stop >= TOTAL:
+            stop = None
+        subset_of_files = {}
+        for fname in seqnames[start:stop]:
+            subset_of_files[fname] = filelist[fname]
+        # Process sequences: calculate patterns and store them to the temporary files
+        print("Processing of the source sequences...")
+        self.workspaces[workspace_id].processSequences(subset_of_files)
+        # Add patterns to a database and search for the most distant patterns
+        print("\nSetting of watchtowers...")
+        self.workspaces[workspace_id].append(elements, counter)
+        start = stop
+        counter += 1
+        if start is None:
+            break
+    return [workspace_id, counter]
+
+def recalculate_watchtowers(self, workspace_id, info, elements):
+    if not elements:
+        return
+    new_workspace_id = tools.randomizer("nnn_#nnnnn", self.workspaces.keys())
+    missed_seq = {}
+    curr_files = {}
+    if workspace_id:
+        curr_files.update(self.workspaces[workspace_id].getSeqLocationInfo())
+    flg_setting_changed = None
+    settings = self.choosePatternType(workspace_id)
+    if settings is None:
+        return
+    if settings:
+        flg_setting_changed = self.setPatternType(settings)
+    self.workspaces[new_workspace_id] = WorkSpace(self.do, new_workspace_id, self.root)
+    self.workspaces[new_workspace_id].setPatternType(self.pattern_type + str(self.normalization) +
+                                                     "_" + str(self.word_length) + "mer")
+    for item in elements:
+        if flg_setting_changed or item not in curr_files:
+            if info[item]['path'] not in missed_seq:
+                missed_seq[info[item]['path']] = [info[item]['seqname']]
+            else:
+                missed_seq[info[item]['path']].append(info[item]['seqname'])
+        elif not flg_setting_changed and workspace_id:
+            self.workspaces[workspace_id].copy(new_workspace_id)
+            self.workspaces[new_workspace_id].setSeqLocationInfo(self.workspaces[workspace_id].getSeqLocationInfo())
+        else:
+            continue
+    if missed_seq:
+        # Process sequences: calculate patterns and store them to the temporary files
+        print("Processing of missed sequences...")
+        self.workspaces[new_workspace_id].processSequences(missed_seq, 1)
+    oTree = self.workspaces[new_workspace_id].setWatchtowers(elements)
+    self.workspaces[new_workspace_id].showTree(0, oTree)
+    self.workspaces[new_workspace_id].setChanged()
+
+def copy_to_FASTA(self, elements, info):
+    folder = tkinter.filedialog.askdirectory()
+    if not folder:
+        return
+    for element in elements:
+        seqlist = self.Builder.getSequence(info[element]['path'])
+        if not seqlist:
+            continue
+        fname = element + ".fst"
+        path = os.path.join(folder, fname)
+        with open(path, "w") as f:
+            for seqname in seqlist:
+                f.write(f">{element}\n{seqlist[seqname]}\n")
+
+def convertToFASTA(self, source_filelist, seqnum, path):
+    seq_counter = 0
+    file_counter = 1
+    output = ""
+    for source_fname in source_filelist:
+        seqlist = self.Builder.getSequence(source_fname, source_filelist[source_fname])
+        if not seqlist:
+            continue
+        for seqname in seqlist:
+            if seqnum == 1:
+                fname = seqname
+                for symbol in ("\\", "/", "|", "?", ":", "\"", "<", ">", "*"):
+                    fname = fname.replace(symbol, "_")
+                fname = os.path.join(path, fname + ".fst")
+                with open(fname, "w") as f:
+                    f.write(f">{seqname}\n{seqlist[seqname]}")
+            else:
+                if seq_counter == seqnum:
+                    fname = path + "#" + str(file_counter) + ".fst"
+                    with open(fname, "w") as f:
+                        f.write(output[:-1])
+                    file_counter += 1
+                    output = ""
+                else:
+                    output += f">{seqname}\n{seqlist[seqname]}\n"
+                    seq_counter += 1
+    if output:
+        fname = path + "#" + str(file_counter) + ".fst"
+        with open(fname, "w") as f:
+            f.write(output[:-1])
+
+def getSeqFromFASTA(self, fname, names=[]):
+    return self.Builder.getSeqFromFASTA(fname, names)
+
+def strait_identification(self):
+    filelist = self.getFileList()
+    if not filelist:
+        return
+    result = self.warnSeqLength()
+    if not result:
+        return
+    oIdentifier = auxiliaries.Identifier(self.root, self.do)
+    report = oIdentifier.identify_sequences(filelist)
+    if report:
+        self.print_report(report)
+
+def console_identification(self, fname, dbname):
+    oIdentifier = auxiliaries.Identifier(self.root, self.do)
+    report = oIdentifier.identify_sequences(fname, dbname)
+    if report:
+        return self.identificationReport2text(report['report'])
+    else:
+        return ""
+
+def console_flatClustering(self, source, wlength, norm):
+    # Set pattern type options
+    settings = {'name': '', 'thresholds': [90, 80, 70, 60, 50, 40, 30, 20, 10, 0], 
+                'normalization': norm, 'pattern type': 'n', 'word length': wlength}
+    self.setPatternType(settings)
+    # Create new workspace without GUI
+    workspace_id = tools.randomizer("nnn_#nnnnn", self.workspaces.keys())
+    self.workspaces[workspace_id] = WorkSpace(self.do, workspace_id, None, settings['name'])
+    self.workspaces[workspace_id].setPatternType(self.pattern_type + str(self.normalization) +
+                                                 "_" + str(self.word_length) + "mer")
+    # Read and process the FASTA file 'source'
+    self.workspaces[workspace_id].processSequences(source)
+    # Create an object of the class nodes.Node
+    oTree = self.workspaces[workspace_id].setWatchtowers()
+    # Create an object of the class reports.TreeViewer
+    oTreeViewer = reports.TreeViewer(None, self.workspaces[workspace_id].do)
+    oTreeViewer.setTreeObject(oTree, self.workspaces[workspace_id].pattern_type)
+    
+    # Multidimensional projection
+    # Set references
+    references = oTree.getListOfOutermosts(oTreeViewer.getThreshold())
+    size = len(oTree.getLeaves())
+    
+    while len(references) < 15 and len(references) != size:
+        threshold = oTreeViewer.getThreshold() - 5
+        if threshold < 0:
+            threshold = 0
+        oTreeViewer.setThreshold(threshold)
+        references = oTree.getListOfOutermosts(oTreeViewer.getThreshold())
+    # Create a projection - reports.TView object
+    result = oTreeViewer.getProjection(self.workspaces[workspace_id].do, references)
+    if not result:
+        raise IOError("Error creating the projection!")
+    oProjection, elements = result
+    if not oProjection:
+        raise IOError("Projection is empty!")
+    oProjection.showProjection()
+    # oProjection.container is a auxiliaries.Container object - collection of
+    # clusters, leave elements and their coordinates in the multidimensional space
+    
+    # Check space resolution
+    resolution = oProjection.resolution()
+    while resolution < 0.75:
+        dim = oProjection.dimension() + 1
+        if dim > size - 1 or dim > 20:
+            break
+        oProjection.showProjection(dim)
+        if resolution >= oProjection.resolution():
+            oProjection.showProjection(dim - 1)
+            break
+        resolution = oProjection.resolution()
+
