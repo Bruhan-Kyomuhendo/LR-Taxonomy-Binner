@@ -1,5 +1,5 @@
-import os, sys,string, math, time, ouplib, dialogs, tools, reports, nodes, auxiliaries
-import distmatrixtype, Pmw
+import os, sys,string, math, time
+#import ouplib, dialogs, tools, reports, nodes, auxiliariesdistmatrixtype, Pmw
 import tkinter.messagebox as tkMessageBox
 import tkinter.filedialog as tkFileDialog
 import tkinter as Tkinter
